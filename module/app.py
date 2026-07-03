@@ -393,6 +393,7 @@ class Application:
         self.cloud_drive_config = CloudDriveConfig()
         self.hide_file_name = False
         self.caption_name_dict: dict = {}
+        self.media_group_counter: dict = {}
         self.caption_entities_dict: dict = {}
         self.max_concurrent_transmissions: int = 1
         self.web_host: str = "0.0.0.0"
@@ -991,7 +992,11 @@ class Application:
         ):
             return None
 
-        return str(self.caption_name_dict[chat_id][media_group_id])
+        caption = str(self.caption_name_dict[chat_id][media_group_id])
+        key = f"{chat_id}_{media_group_id}"
+        count = self.media_group_counter.get(key, 0) + 1
+        self.media_group_counter[key] = count
+        return f"{caption}_{count}"
 
     def set_caption_entities(
         self, chat_id: Union[int, str], media_group_id: Optional[str], caption_entities
