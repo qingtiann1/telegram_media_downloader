@@ -3,7 +3,6 @@
 import asyncio
 import os
 import time
-from asyncio import Lock
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
@@ -151,6 +150,7 @@ class TaskNode:
         self.task_type = task_type
         self.total_task = 0
         self.total_download_task = 0
+        self.downloaded_file_ids = set()
         self.failed_download_task = 0
         self.success_download_task = 0
         self.skip_download_task = 0
@@ -168,7 +168,6 @@ class TaskNode:
         self.upload_success_count: int = 0
         self.is_stop_transmission = False
         self.media_group_ids: dict = {}
-        self.media_group_ids_lock: Lock = Lock()
         self.download_status: dict = {}
         self.upload_status: dict = {}
         self.upload_stat_dict: dict = {}
@@ -370,6 +369,7 @@ class Application:
         self.is_running = True
 
         self.total_download_task = 0
+        self.downloaded_file_ids = set()
 
         self.chat_download_config: dict = {}
 
@@ -393,8 +393,8 @@ class Application:
         self.cloud_drive_config = CloudDriveConfig()
         self.hide_file_name = False
         self.caption_name_dict: dict = {}
-        self.media_group_counter: dict = {}
         self.caption_entities_dict: dict = {}
+        self.media_group_counter: dict = {}
         self.max_concurrent_transmissions: int = 1
         self.web_host: str = "0.0.0.0"
         self.web_port: int = 5000
@@ -411,13 +411,7 @@ class Application:
         self.date_format: str = "%Y_%m"
         self.drop_no_audio_video: bool = False
         self.enable_download_txt: bool = False
-        self.filter_advertisement_list: yaml.comments.CommentedSeq = (
-            yaml.comments.CommentedSeq([])
-        )
-        self.replace_advertisement_list: yaml.comments.CommentedSeq = (
-            yaml.comments.CommentedSeq([])
-        )
-        self.group_add_advertisement: dict = {}
+
         self.forward_limit_call = LimitCall(max_limit_call_times=33)
 
         self.loop = asyncio.new_event_loop()
@@ -553,22 +547,6 @@ class Application:
             _config, "enable_download_txt", self.enable_download_txt, bool
         )
 
-        self.filter_advertisement_list = get_config(
-            _config,
-            "filter_advertisement_list",
-            self.filter_advertisement_list,
-            yaml.comments.CommentedSeq,
-        )
-
-        self.replace_advertisement_list = get_config(
-            _config,
-            "replace_advertisement_list",
-            self.replace_advertisement_list,
-            yaml.comments.CommentedSeq,
-        )
-
-        if _config.get("group_add_advertisement"):
-            self.group_add_advertisement = _config["group_add_advertisement"]
         try:
             date = datetime(2023, 10, 31)
             date.strftime(self.date_format)
@@ -847,19 +825,19 @@ class Application:
             unfinished_ids = set(value.ids_to_retry)
 
             for it in value.ids_to_retry:
-                if value.node.download_status.get(
+                if  value.node.download_status.get(
                     it, DownloadStatus.FailedDownload
                 ) in [DownloadStatus.SuccessDownload, DownloadStatus.SkipDownload]:
                     unfinished_ids.remove(it)
 
             for _idx, _value in value.node.download_status.items():
-                if _value not in (
-                    DownloadStatus.SuccessDownload,
-                    DownloadStatus.SkipDownload,
-                ):
+                if DownloadStatus.SuccessDownload != _value and DownloadStatus.SkipDownload != _value:
                     unfinished_ids.add(_idx)
 
             self.chat_download_config[key].ids_to_retry = list(unfinished_ids)
+
+        if app_data.get("downloaded_file_ids"):
+            self.downloaded_file_ids = set(app_data["downloaded_file_ids"])
 
             if idx >= len(self.app_data["chat"]):
                 self.app_data["chat"].append({})
@@ -870,7 +848,10 @@ class Application:
                 )
 
             self.app_data["chat"][idx]["chat_id"] = key
+            self.app_data[chr(34) + chr(34) + idx][chr(34) + chr(34) + last_read_message_id] = value.last_read_message_id
             self.app_data["chat"][idx]["ids_to_retry"] = value.ids_to_retry
+            self.app_data["chat"][idx]["last_read_message_id"] = value.last_read_message_id
+            self.app_data['chat'][idx]['last_read_message_id'] = value.last_read_message_id
             idx += 1
 
         self.config["save_path"] = self.save_path
@@ -889,13 +870,11 @@ class Application:
             self.config.pop("last_read_message_id")
 
         self.config["language"] = self.language.name
+        self.app_data["downloaded_file_ids"] = list(self.downloaded_file_ids)
         # for it in self.downloaded_ids:
         #    self.already_download_ids_set.add(it)
 
         # self.app_data["already_download_ids"] = list(self.already_download_ids_set)
-        self.config["filter_advertisement_list"] = self.filter_advertisement_list
-        self.config["replace_advertisement_list"] = self.replace_advertisement_list
-        self.config["group_add_advertisement"] = self.group_add_advertisement
 
         if immediate:
             with open(self.config_file, "w", encoding="utf-8") as yaml_file:
@@ -936,19 +915,6 @@ class Application:
         if not os.path.exists(self.session_file_path):
             os.makedirs(self.session_file_path)
         set_language(self.language)
-
-    def is_match_advertisement(self, caption) -> bool:
-        """is match advertisement
-
-        Parameters
-        ----------
-        caption: str
-        """
-        for ad in self.filter_advertisement_list:
-            if ad in caption:
-                return True
-
-        return False
 
     def set_caption_name(
         self, chat_id: Union[int, str], media_group_id: Optional[str], caption: str
@@ -997,7 +963,6 @@ class Application:
         count = self.media_group_counter.get(key, 0) + 1
         self.media_group_counter[key] = count
         return f"{caption}_{count}"
-
     def set_caption_entities(
         self, chat_id: Union[int, str], media_group_id: Optional[str], caption_entities
     ):

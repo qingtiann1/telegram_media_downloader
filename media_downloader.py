@@ -401,6 +401,10 @@ async def download_media(
             _media = getattr(message, _type, None)
             if _media is None:
                 continue
+            file_unique_id = getattr(_media, "file_unique_id", None)
+            if file_unique_id and file_unique_id in app.downloaded_file_ids:
+                logger.info(f"id={message.id} already downloaded (dup).")
+                return DownloadStatus.SkipDownload, None
             file_name, temp_file_name, file_format = await _get_media_meta(
                 node.chat_id, message, _media, _type
             )
@@ -455,6 +459,8 @@ async def download_media(
                 _check_download_finish(media_size, temp_download_path, ui_file_name)
                 await asyncio.sleep(0.5)
                 _move_to_download_path(temp_download_path, file_name)
+                if file_unique_id:
+                    app.downloaded_file_ids.add(file_unique_id)
                 # TODO: if not exist file size or media
                 return DownloadStatus.SuccessDownload, file_name
         except pyrogram.errors.exceptions.bad_request_400.BadRequest:
@@ -656,7 +662,6 @@ def main():
         proxy=app.proxy,
         workdir=app.session_file_path,
         start_timeout=app.start_timeout,
-        no_updates=True,
     )
     try:
         app.pre_run()
